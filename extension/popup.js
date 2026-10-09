@@ -51,7 +51,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     'licenseKey', 'apiUrl', 'maxMembers', 'scrollDelay', 'exportFormat', 'idsOnly'
   ]);
 
-  const defaultApiUrl = 'http://localhost:3000';
+  const defaultApiUrl = 'https://exporter.yurafy.com';
   const apiUrl = storage.apiUrl || defaultApiUrl;
   apiUrlInput.value = apiUrl;
   portalLink.href = `${apiUrl}/dashboard`;

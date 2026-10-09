@@ -11,6 +11,7 @@
   ],
   "host_permissions": [
     "https://*.facebook.com/*",
+    "https://exporter.yurafy.com/*",
     "http://localhost:3000/*",
     "https://*/*"
   ],

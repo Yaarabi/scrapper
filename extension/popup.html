@@ -75,7 +75,13 @@
           <span class="status-detail" id="pageStatusDetail">Open a Facebook Group members page</span>
         </div>
       </div>
-      <button id="btnOpenFb" class="btn btn-secondary full-width btn-sm hidden">Open Facebook Group</button>
+      
+      <!-- Direct Group Link Navigator -->
+      <div style="margin-top: 10px; display: flex; gap: 6px;">
+        <input type="text" id="directGroupInput" placeholder="Paste Group URL or ID..." style="font-size: 11px; padding: 6px 8px; flex: 1;">
+        <button type="button" id="btnGoGroup" class="btn btn-primary btn-sm" style="white-space: nowrap; margin: 0; padding: 6px 10px;">Go to Members &rarr;</button>
+      </div>
+      <button id="btnOpenFb" class="btn btn-secondary full-width btn-sm hidden" style="margin-top: 8px;">Open Facebook Groups</button>
     </section>
 
     <!-- Scraper Configuration -->

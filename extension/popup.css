@@ -23,13 +23,28 @@
 }
 
 body {
-  width: 360px;
+  width: 370px;
+  max-height: 590px;
+  overflow-y: auto;
+  overflow-x: hidden;
   background-color: var(--bg-primary);
   color: var(--text-main);
   font-family: var(--font-family);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.4;
-  user-select: none;
+}
+
+body::-webkit-scrollbar {
+  width: 5px;
+}
+
+body::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+body::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
 }
 
 .app-container {

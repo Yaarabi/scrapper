@@ -202,6 +202,45 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  // Direct Group URL Navigation
+  const directGroupInput = document.getElementById('directGroupInput');
+  const btnGoGroup = document.getElementById('btnGoGroup');
+
+  function navigateToGroupMembers() {
+    const raw = directGroupInput.value.trim();
+    if (!raw) return;
+
+    let targetUrl = '';
+    if (/^[A-Za-z0-9.]+$/.test(raw)) {
+      targetUrl = `https://www.facebook.com/groups/${raw}/members/`;
+    } else {
+      try {
+        const parsed = new URL(raw.startsWith('http') ? raw : `https://${raw}`);
+        const parts = parsed.pathname.split('/').filter(Boolean);
+        const groupIdx = parts.indexOf('groups');
+        if (groupIdx !== -1 && parts.length > groupIdx + 1) {
+          const slug = parts[groupIdx + 1];
+          targetUrl = `https://www.facebook.com/groups/${slug}/members/`;
+        } else {
+          targetUrl = raw;
+        }
+      } catch (e) {
+        targetUrl = `https://www.facebook.com/groups/${raw}/members/`;
+      }
+    }
+
+    if (activeTabId) {
+      chrome.tabs.update(activeTabId, { url: targetUrl });
+    } else {
+      chrome.tabs.create({ url: targetUrl });
+    }
+  }
+
+  btnGoGroup.addEventListener('click', navigateToGroupMembers);
+  directGroupInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') navigateToGroupMembers();
+  });
+
   // 5. Detect active tab and Facebook page
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   activeTabId = tab?.id;

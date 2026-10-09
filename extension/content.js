@@ -4,7 +4,11 @@
   if (window.__fbExporterLoaded) return;
   window.__fbExporterLoaded = true;
 
-  const HOSTS = ['facebook.com', 'www.facebook.com', 'm.facebook.com'];
+  function isFacebookHost(hostname) {
+    if (!hostname) return false;
+    return hostname === 'facebook.com' || hostname.endsWith('.facebook.com');
+  }
+
   const RESERVED = new Set([
     'groups', 'home', 'watch', 'reel', 'reels', 'stories', 'friends', 'notifications',
     'marketplace', 'gaming', 'messages', 'login', 'logout', 'help', 'settings',
@@ -24,10 +28,10 @@
   function getGroupSlug() {
     try {
       const url = new URL(window.location.href);
-      if (!HOSTS.includes(url.hostname)) return null;
       const parts = url.pathname.split('/').filter(Boolean);
-      if (parts[0] === 'groups' && parts.length >= 2) {
-        return parts[1];
+      const groupIdx = parts.indexOf('groups');
+      if (groupIdx !== -1 && parts.length > groupIdx + 1) {
+        return parts[groupIdx + 1];
       }
     } catch (e) {}
     return null;
@@ -36,9 +40,18 @@
   function isMembersPage() {
     try {
       const url = new URL(window.location.href);
-      if (!HOSTS.includes(url.hostname)) return false;
-      const parts = url.pathname.split('/').filter(Boolean);
-      return parts[0] === 'groups' && parts.length >= 3 && parts[2] === 'members';
+      const path = url.pathname.toLowerCase();
+      // 1. Matches keywords in URL
+      if (path.includes('/members') || path.includes('/people') || path.includes('/user') ||
+          url.search.includes('members') || url.search.includes('people')) {
+        return true;
+      }
+      // 2. Or member elements exist in the DOM
+      if (document.querySelector('a[href*="/user/"], [role="listitem"] a[href*="profile.php"], a[href*="/groups/"][href*="/user/"]')) {
+        return true;
+      }
+      // 3. Fallback: if on any group page, allow scraping
+      return Boolean(getGroupSlug());
     } catch (e) {
       return false;
     }
@@ -70,7 +83,7 @@
   function extractIdentity(href, group) {
     try {
       const url = new URL(href, window.location.href);
-      if (!HOSTS.includes(url.hostname)) return null;
+      if (!isFacebookHost(url.hostname)) return null;
       const path = url.pathname.replace(/^\/|\/$/g, '');
       const parts = path.split('/');
 

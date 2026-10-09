@@ -7,10 +7,12 @@
     "storage",
     "downloads",
     "activeTab",
-    "scripting"
+    "scripting",
+    "tabs"
   ],
   "host_permissions": [
     "https://*.facebook.com/*",
+    "https://facebook.com/*",
     "https://exporter.yurafy.com/*",
     "http://localhost:3000/*",
     "https://*/*"
@@ -34,7 +36,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://*.facebook.com/groups/*/members*"
+        "https://*.facebook.com/*",
+        "https://facebook.com/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"

@@ -190,49 +190,141 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Clear Group History button
-  btnClearHistory.addEventListener('click', () => {
-    if (!activeTabId) return;
-    if (confirm('Clear saved history for this group? Next export will re-collect members from the beginning.')) {
-      chrome.tabs.sendMessage(activeTabId, { action: 'CLEAR_HISTORY' }, (res) => {
-        if (res && res.success) {
-          historyCount.textContent = '0';
-          groupHistoryCard.classList.add('hidden');
-        }
-      });
+  btnClearHistory.addEventListener('click', async () => {
+    let group = null;
+    const inputVal = directGroupInput.value.trim();
+    if (inputVal) {
+      const g = extractGroupInfo(inputVal);
+      if (g) group = g.slug;
+    }
+    if (!group && tab && tab.url) {
+      const g = extractGroupInfo(tab.url);
+      if (g) group = g.slug;
+    }
+    if (!group) return;
+
+    if (confirm(`Clear saved history for group "${group}"? Next export will re-collect members from the beginning.`)) {
+      await chrome.storage.local.remove([`fb_history_${group}`]);
+      historyCount.textContent = '0';
+      groupHistoryCard.classList.add('hidden');
+      if (activeTabId) {
+        chrome.tabs.sendMessage(activeTabId, { action: 'CLEAR_HISTORY' }, () => {});
+      }
     }
   });
 
-  // Direct Group URL Navigation
+  // Direct Group URL Parser & Navigation
   const directGroupInput = document.getElementById('directGroupInput');
   const btnGoGroup = document.getElementById('btnGoGroup');
 
-  function navigateToGroupMembers() {
-    const raw = directGroupInput.value.trim();
-    if (!raw) return;
+  function extractGroupInfo(input) {
+    if (!input || typeof input !== 'string') return null;
+    const str = input.trim();
+    if (!str) return null;
 
-    let targetUrl = '';
-    if (/^[A-Za-z0-9.]+$/.test(raw)) {
-      targetUrl = `https://www.facebook.com/groups/${raw}/members/`;
-    } else {
-      try {
-        const parsed = new URL(raw.startsWith('http') ? raw : `https://${raw}`);
+    // 1. Direct group ID or clean slug (e.g. "1151260842804020" or "reactdevelopers")
+    if (/^[A-Za-z0-9._-]+$/.test(str) && !str.includes('/') && !str.includes('?')) {
+      return {
+        slug: str,
+        isMembers: true,
+        membersUrl: `https://www.facebook.com/groups/${str}/members/`
+      };
+    }
+
+    // 2. Full or partial URL
+    try {
+      const rawUrl = str.startsWith('http') ? str : `https://${str}`;
+      const parsed = new URL(rawUrl);
+      if (parsed.hostname.includes('facebook.com')) {
         const parts = parsed.pathname.split('/').filter(Boolean);
         const groupIdx = parts.indexOf('groups');
         if (groupIdx !== -1 && parts.length > groupIdx + 1) {
           const slug = parts[groupIdx + 1];
-          targetUrl = `https://www.facebook.com/groups/${slug}/members/`;
-        } else {
-          targetUrl = raw;
+          const isMembers = parts.includes('members') || parts.includes('people') || parts.includes('user') ||
+                            parsed.search.includes('members') || parsed.search.includes('people');
+          return {
+            slug,
+            isMembers,
+            membersUrl: `https://www.facebook.com/groups/${slug}/members/`,
+            originalUrl: parsed.href
+          };
         }
-      } catch (e) {
-        targetUrl = `https://www.facebook.com/groups/${raw}/members/`;
       }
+    } catch (e) {}
+
+    return null;
+  }
+
+  async function refreshHistoryCount(slug) {
+    if (!slug) return;
+    try {
+      const histKey = `fb_history_${slug}`;
+      const res = await chrome.storage.local.get([histKey]);
+      const list = res[histKey] || [];
+      if (list.length > 0) {
+        historyCount.textContent = list.length.toLocaleString();
+        groupHistoryCard.classList.remove('hidden');
+      } else {
+        groupHistoryCard.classList.add('hidden');
+      }
+    } catch (e) {}
+  }
+
+  function waitForTabComplete(tabId) {
+    return new Promise((resolve) => {
+      let resolved = false;
+      const timer = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          chrome.tabs.onUpdated.removeListener(onUpdated);
+          resolve();
+        }
+      }, 5000);
+
+      function onUpdated(tId, changeInfo) {
+        if (tId === tabId && changeInfo.status === 'complete') {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timer);
+            chrome.tabs.onUpdated.removeListener(onUpdated);
+            setTimeout(resolve, 1500); // Wait for Facebook SPA rendering
+          }
+        }
+      }
+      chrome.tabs.onUpdated.addListener(onUpdated);
+    });
+  }
+
+  async function ensureContentScriptInjected(tabId) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['content.js']
+      });
+    } catch (e) {}
+  }
+
+  async function navigateToGroupMembers() {
+    const raw = directGroupInput.value.trim();
+    const group = extractGroupInfo(raw);
+    if (!group) {
+      alert('Please enter a valid Facebook Group URL or Group ID.');
+      directGroupInput.focus();
+      return;
     }
 
+    statusDot.className = 'status-dot dot-green';
+    pageStatusHeading.textContent = `Loading: ${group.slug}`;
+    pageStatusDetail.textContent = 'Navigating to group members tab...';
+    isPageValid = true;
+    updateStartButtonState();
+    refreshHistoryCount(group.slug);
+
     if (activeTabId) {
-      chrome.tabs.update(activeTabId, { url: targetUrl });
+      await chrome.tabs.update(activeTabId, { url: group.membersUrl });
     } else {
-      chrome.tabs.create({ url: targetUrl });
+      const newTab = await chrome.tabs.create({ url: group.membersUrl });
+      activeTabId = newTab.id;
     }
   }
 
@@ -242,86 +334,79 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // 5. Detect active tab and Facebook page
+  let currentTabGroup = null;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   activeTabId = tab?.id;
 
   if (tab && tab.url) {
-    try {
-      const url = new URL(tab.url);
-      const isFb = url.hostname.includes('facebook.com');
-
-      if (isFb) {
-        chrome.tabs.sendMessage(activeTabId, { action: 'CHECK_PAGE' }, (response) => {
-          if (chrome.runtime.lastError || !response) {
-            chrome.scripting.executeScript({
-              target: { tabId: activeTabId },
-              files: ['content.js']
-            }, () => {
-              chrome.tabs.sendMessage(activeTabId, { action: 'CHECK_PAGE' }, (res2) => {
-                handlePageCheck(res2);
-              });
-            });
-          } else {
-            handlePageCheck(response);
-          }
-        });
-      } else {
-        handleNonFbPage();
-      }
-    } catch (e) {
-      handleNonFbPage();
-    }
+    currentTabGroup = extractGroupInfo(tab.url);
   }
 
-  function handlePageCheck(response) {
-    if (response && response.isMembersPage) {
-      isPageValid = true;
-      statusDot.className = 'status-dot dot-green';
-      pageStatusHeading.textContent = `Group: ${response.groupSlug || 'Members'}`;
-      pageStatusDetail.textContent = 'Ready to extract member list';
+  if (currentTabGroup) {
+    isPageValid = true;
+    directGroupInput.value = tab.url;
+    statusDot.className = 'status-dot dot-green';
+    pageStatusHeading.textContent = `Group: ${currentTabGroup.slug}`;
+
+    if (currentTabGroup.isMembers) {
+      pageStatusDetail.textContent = 'Ready on Members tab';
       btnOpenFb.classList.add('hidden');
-
-      // Check saved history count
-      chrome.tabs.sendMessage(activeTabId, { action: 'GET_HISTORY_COUNT' }, (histRes) => {
-        if (histRes && histRes.count > 0) {
-          historyCount.textContent = histRes.count.toLocaleString();
-          groupHistoryCard.classList.remove('hidden');
-        } else {
-          groupHistoryCard.classList.add('hidden');
-        }
-      });
-
-      // If already has items in session, suggest resume
-      if (response.existingCount > 0) {
-        modeResume.click();
-      }
-
-      if (response.isScraping) {
-        setRunningState(true);
-      }
     } else {
-      isPageValid = false;
-      statusDot.className = 'status-dot dot-red';
-      pageStatusHeading.textContent = 'Not on Members Tab';
-      pageStatusDetail.textContent = 'Open the group and click on "Members" or "People" tab';
+      pageStatusDetail.textContent = 'Group detected! Ready (will open Members on Start)';
+      btnOpenFb.textContent = 'Switch to Members Tab';
       btnOpenFb.classList.remove('hidden');
-      groupHistoryCard.classList.add('hidden');
+      btnOpenFb.onclick = () => {
+        chrome.tabs.update(activeTabId, { url: currentTabGroup.membersUrl });
+      };
     }
-    updateStartButtonState();
-  }
 
-  function handleNonFbPage() {
+    refreshHistoryCount(currentTabGroup.slug);
+
+    chrome.tabs.sendMessage(activeTabId, { action: 'CHECK_PAGE' }, (response) => {
+      if (chrome.runtime.lastError || !response) {
+        chrome.scripting.executeScript({
+          target: { tabId: activeTabId },
+          files: ['content.js']
+        }).catch(() => {});
+      } else {
+        if (response.isScraping) {
+          setRunningState(true);
+        }
+        if (response.existingCount > 0) {
+          modeResume.click();
+        }
+      }
+    });
+  } else {
     isPageValid = false;
     statusDot.className = 'status-dot dot-gray';
-    pageStatusHeading.textContent = 'Facebook Not Active';
-    pageStatusDetail.textContent = 'Open a Facebook Group members page';
+    pageStatusHeading.textContent = 'Enter Group or Open Facebook';
+    pageStatusDetail.textContent = 'Paste a group link above or open Facebook';
+    btnOpenFb.textContent = 'Open Facebook Groups';
     btnOpenFb.classList.remove('hidden');
-    groupHistoryCard.classList.add('hidden');
-    updateStartButtonState();
+    btnOpenFb.onclick = () => {
+      chrome.tabs.create({ url: 'https://www.facebook.com/groups/' });
+    };
   }
 
-  btnOpenFb.addEventListener('click', () => {
-    chrome.tabs.create({ url: 'https://www.facebook.com/groups/' });
+  directGroupInput.addEventListener('input', () => {
+    const val = directGroupInput.value.trim();
+    const group = extractGroupInfo(val);
+    if (group) {
+      isPageValid = true;
+      statusDot.className = 'status-dot dot-green';
+      pageStatusHeading.textContent = `Group: ${group.slug}`;
+      pageStatusDetail.textContent = 'Group detected! Click "Start Extraction" to scrape.';
+      btnOpenFb.classList.add('hidden');
+      updateStartButtonState();
+      refreshHistoryCount(group.slug);
+    } else if (!currentTabGroup) {
+      isPageValid = false;
+      statusDot.className = 'status-dot dot-gray';
+      pageStatusHeading.textContent = 'Paste Group Link Above';
+      pageStatusDetail.textContent = 'Enter a valid group URL or numeric ID';
+      updateStartButtonState();
+    }
   });
 
   function updateStartButtonState() {
@@ -342,9 +427,61 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // 6. Start extraction
-  btnStart.addEventListener('click', () => {
-    if (!activeTabId || !isLicenseValid || !isPageValid) return;
+  btnStart.addEventListener('click', async () => {
+    if (!isLicenseValid) {
+      alert('Please activate a valid license first.');
+      return;
+    }
 
+    // 1. Determine target group
+    let targetGroup = extractGroupInfo(directGroupInput.value.trim());
+    if (!targetGroup && activeTabId) {
+      try {
+        const curTab = await chrome.tabs.get(activeTabId);
+        if (curTab && curTab.url) {
+          targetGroup = extractGroupInfo(curTab.url);
+        }
+      } catch (e) {}
+    }
+
+    if (!targetGroup) {
+      alert('Please paste a Facebook Group URL or ID in the input box above.');
+      directGroupInput.focus();
+      return;
+    }
+
+    setRunningState(true);
+    liveStatusText.textContent = `Connecting to ${targetGroup.slug}...`;
+
+    // 2. Ensure active tab is on members page
+    let tabToUse = null;
+    if (activeTabId) {
+      try {
+        tabToUse = await chrome.tabs.get(activeTabId);
+      } catch (e) {
+        tabToUse = null;
+      }
+    }
+
+    if (!tabToUse) {
+      tabToUse = await chrome.tabs.create({ url: targetGroup.membersUrl });
+      activeTabId = tabToUse.id;
+      await waitForTabComplete(activeTabId);
+    } else {
+      const tabGroup = tabToUse.url ? extractGroupInfo(tabToUse.url) : null;
+      const isAlreadyOnMembers = tabGroup && tabGroup.slug === targetGroup.slug && tabGroup.isMembers;
+
+      if (!isAlreadyOnMembers) {
+        liveStatusText.textContent = `Navigating to members tab...`;
+        await chrome.tabs.update(activeTabId, { url: targetGroup.membersUrl });
+        await waitForTabComplete(activeTabId);
+      }
+    }
+
+    // 3. Inject content script
+    await ensureContentScriptInjected(activeTabId);
+
+    // 4. Send START_SCRAPING
     const options = {
       maxMembers: parseInt(maxMembers.value, 10) || 1000,
       scrollDelay: parseFloat(scrollDelay.value) || 2.5,
@@ -355,18 +492,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       batchSize: parseInt(batchSize.value, 10) || 0,
     };
 
-    chrome.tabs.sendMessage(activeTabId, {
-      action: 'START_SCRAPING',
-      options
-    }, () => {
-      setRunningState(true);
-      if (currentMode !== 'resume') {
-        statCollected.textContent = '0';
-        statWithIds.textContent = '0';
-        statScrolls.textContent = '0';
-        progressBar.style.width = '0%';
+    chrome.tabs.sendMessage(activeTabId, { action: 'START_SCRAPING', options }, (res) => {
+      if (chrome.runtime.lastError || !res) {
+        setTimeout(() => {
+          chrome.tabs.sendMessage(activeTabId, { action: 'START_SCRAPING', options });
+        }, 1000);
       }
     });
+
+    if (currentMode !== 'resume') {
+      statCollected.textContent = '0';
+      statWithIds.textContent = '0';
+      statScrolls.textContent = '0';
+      progressBar.style.width = '0%';
+    }
+    liveStatusText.textContent = 'Extraction started! Scrolling members...';
   });
 
   // 7. Stop extraction

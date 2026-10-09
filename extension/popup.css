@@ -314,6 +314,11 @@ select:focus {
   box-shadow: 0 0 8px var(--accent);
 }
 
+.dot-yellow {
+  background: var(--warning);
+  box-shadow: 0 0 8px var(--warning);
+}
+
 .dot-red {
   background: var(--danger);
   box-shadow: 0 0 8px var(--danger);
@@ -321,6 +326,18 @@ select:focus {
 
 .dot-gray {
   background: #64748b;
+}
+
+.direct-group-box {
+  margin-top: 10px;
+  display: flex;
+  gap: 6px;
+}
+
+.direct-group-input {
+  font-size: 11px;
+  padding: 7px 9px;
+  flex: 1;
 }
 
 .status-text-wrap {

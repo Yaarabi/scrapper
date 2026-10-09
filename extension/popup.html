@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FB Group Exporter Pro</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="logo-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+        </div>
+        <div>
+          <h1 class="app-title">FB Exporter Pro</h1>
+          <span class="app-subtitle">Edition v1.0</span>
+        </div>
+      </div>
+      <div id="licenseBadge" class="status-badge badge-pending">Checking...</div>
+    </header>
+
+    <!-- License Activation Card (Shown when unverified/expired) -->
+    <section id="licenseSection" class="card license-card">
+      <div class="card-header">
+        <span class="card-title">Account Activation</span>
+        <button id="toggleLicenseSettings" class="btn-icon" title="Server Settings">&#9881;</button>
+      </div>
+
+      <div id="licenseInputView">
+        <p class="card-desc">Enter your unique license key to unlock extraction features.</p>
+        <div class="form-group">
+          <label for="licenseKeyInput">License Key</label>
+          <input type="text" id="licenseKeyInput" placeholder="FBX-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false">
+        </div>
+        <div id="serverUrlGroup" class="form-group hidden">
+          <label for="apiUrlInput">API Server URL</label>
+          <input type="url" id="apiUrlInput" value="http://localhost:3000">
+          <small class="hint">Change only if using custom production domain</small>
+        </div>
+        <button id="btnActivate" class="btn btn-primary full-width">Activate License</button>
+      </div>
+
+      <div id="licenseActiveView" class="hidden">
+        <div class="license-info-row">
+          <span class="label">Subscriber:</span>
+          <span id="subscriberName" class="val">-</span>
+        </div>
+        <div class="license-info-row">
+          <span class="label">Valid Until:</span>
+          <span id="subscriberExpiry" class="val text-success">-</span>
+        </div>
+        <div class="license-info-row">
+          <span class="label">Days Remaining:</span>
+          <span id="subscriberDays" class="badge-days">-</span>
+        </div>
+        <button id="btnChangeLicense" class="btn-link">Change License Key</button>
+      </div>
+      <div id="licenseError" class="alert alert-error hidden"></div>
+    </section>
+
+    <!-- Facebook Group Status -->
+    <section class="card status-card">
+      <div class="page-status-indicator" id="pageStatusIndicator">
+        <div class="status-dot dot-gray" id="statusDot"></div>
+        <div class="status-text-wrap">
+          <span class="status-heading" id="pageStatusHeading">Checking Facebook Tab...</span>
+          <span class="status-detail" id="pageStatusDetail">Open a Facebook Group members page</span>
+        </div>
+      </div>
+      <button id="btnOpenFb" class="btn btn-secondary full-width btn-sm hidden">Open Facebook Group</button>
+    </section>
+
+    <!-- Scraper Configuration -->
+    <section id="configSection" class="card">
+      <div class="card-header">
+        <span class="card-title">Export Settings</span>
+      </div>
+
+      <div class="settings-grid">
+        <div class="form-group">
+          <label for="maxMembers">Max Members</label>
+          <input type="number" id="maxMembers" min="10" max="50000" value="1000">
+        </div>
+        <div class="form-group">
+          <label for="scrollDelay">Scroll Delay (s)</label>
+          <input type="number" id="scrollDelay" min="1" max="15" step="0.5" value="2.5">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="exportFormat">Output Format</label>
+        <select id="exportFormat">
+          <option value="both" selected>Both (CSV & JSON)</option>
+          <option value="csv">CSV Only (Excel ready)</option>
+          <option value="json">JSON Only</option>
+        </select>
+      </div>
+
+      <div class="form-check">
+        <label class="toggle-label">
+          <input type="checkbox" id="idsOnly">
+          <span class="toggle-slider"></span>
+          <span class="toggle-text">Only Export Numeric IDs</span>
+        </label>
+      </div>
+    </section>
+
+    <!-- Progress & Live Stats -->
+    <section id="statsSection" class="card stats-card hidden">
+      <div class="stats-grid">
+        <div class="stat-box">
+          <span class="stat-value" id="statCollected">0</span>
+          <span class="stat-label">Collected</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-value text-accent" id="statWithIds">0</span>
+          <span class="stat-label">With Numeric ID</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-value" id="statScrolls">0</span>
+          <span class="stat-label">Scrolls</span>
+        </div>
+      </div>
+      <div class="progress-bar-wrap">
+        <div id="progressBar" class="progress-bar-fill" style="width: 0%"></div>
+      </div>
+      <div id="liveStatusText" class="live-status-text">Ready to start extraction...</div>
+    </section>
+
+    <!-- Actions -->
+    <div class="actions-container">
+      <button id="btnStart" class="btn btn-action-start full-width" disabled>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="5 3 19 12 5 21 5 3"></polygon>
+        </svg>
+        <span>Start Extraction</span>
+      </button>
+
+      <button id="btnStop" class="btn btn-danger full-width hidden">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="6" y="6" width="12" height="12"></rect>
+        </svg>
+        <span>Stop & Export Data</span>
+      </button>
+    </div>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <span>Protected by SaaS Licensing</span>
+      <a href="http://localhost:3000/dashboard" target="_blank" id="portalLink">User Dashboard &rarr;</a>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

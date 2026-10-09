@@ -1,0 +1,28 @@
+# Virtual environments & caches
+.venv/
+.uv-cache/
+__pycache__/
+*.pyc
+
+# Facebook session & browser profile directories (CRITICAL: NEVER COMMIT)
+.facebook-profile/
+.facebook-profile*/
+
+# Test & export artifacts
+exports/
+test-results/
+
+# Node & Next.js dependencies and builds
+node_modules/
+.next/
+web/node_modules/
+web/.next/
+web/.env*.local
+.env*.local
+.env
+!.env.example
+!web/.env.example
+
+# Misc
+.DS_Store
+Thumbs.db

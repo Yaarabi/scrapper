@@ -21,6 +21,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   const pageStatusDetail = document.getElementById('pageStatusDetail');
   const btnOpenFb = document.getElementById('btnOpenFb');
 
+  // Mode & Large Group Controls
+  const modeFresh = document.getElementById('modeFresh');
+  const modeResume = document.getElementById('modeResume');
+  const batchSize = document.getElementById('batchSize');
+  const skipPrevious = document.getElementById('skipPrevious');
+  const groupHistoryCard = document.getElementById('groupHistoryCard');
+  const historyCount = document.getElementById('historyCount');
+  const btnClearHistory = document.getElementById('btnClearHistory');
+
   const maxMembers = document.getElementById('maxMembers');
   const scrollDelay = document.getElementById('scrollDelay');
   const exportFormat = document.getElementById('exportFormat');
@@ -40,15 +49,30 @@ document.addEventListener('DOMContentLoaded', async () => {
   let activeTabId = null;
   let isPageValid = false;
   let isLicenseValid = false;
+  let currentMode = 'fresh'; // 'fresh' or 'resume'
 
   // 1. Settings toggle for API Server URL
   toggleLicenseSettings.addEventListener('click', () => {
     serverUrlGroup.classList.toggle('hidden');
   });
 
+  // Mode Selection Handlers
+  modeFresh.addEventListener('click', () => {
+    currentMode = 'fresh';
+    modeFresh.classList.add('active');
+    modeResume.classList.remove('active');
+  });
+
+  modeResume.addEventListener('click', () => {
+    currentMode = 'resume';
+    modeResume.classList.add('active');
+    modeFresh.classList.remove('active');
+  });
+
   // 2. Load stored license & settings
   const storage = await chrome.storage.local.get([
-    'licenseKey', 'apiUrl', 'maxMembers', 'scrollDelay', 'exportFormat', 'idsOnly'
+    'licenseKey', 'apiUrl', 'maxMembers', 'scrollDelay', 'exportFormat', 'idsOnly',
+    'batchSize', 'skipPrevious', 'extractionMode'
   ]);
 
   const defaultApiUrl = 'https://exporter.yurafy.com';
@@ -60,6 +84,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (storage.scrollDelay) scrollDelay.value = storage.scrollDelay;
   if (storage.exportFormat) exportFormat.value = storage.exportFormat;
   if (storage.idsOnly !== undefined) idsOnly.checked = storage.idsOnly;
+  if (storage.batchSize !== undefined) batchSize.value = storage.batchSize;
+  if (storage.skipPrevious !== undefined) skipPrevious.checked = storage.skipPrevious;
+
+  if (storage.extractionMode === 'resume') {
+    currentMode = 'resume';
+    modeResume.classList.add('active');
+    modeFresh.classList.remove('active');
+  }
 
   if (storage.licenseKey) {
     licenseKeyInput.value = storage.licenseKey;
@@ -110,7 +142,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (err) {
       isLicenseValid = false;
       showLicenseInactive('Cannot reach SaaS server');
-      licenseError.textContent = `Error connecting to ${url}. Make sure web app is running.`;
+      licenseError.textContent = `Error connecting to ${url}. Make sure your internet connection or server is active.`;
       licenseError.classList.remove('hidden');
     }
 
@@ -143,15 +175,31 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // 4. Save form settings on change
-  [maxMembers, scrollDelay, exportFormat, idsOnly].forEach(elem => {
+  [maxMembers, scrollDelay, exportFormat, idsOnly, batchSize, skipPrevious].forEach(elem => {
     elem.addEventListener('change', () => {
       chrome.storage.local.set({
         maxMembers: parseInt(maxMembers.value, 10),
         scrollDelay: parseFloat(scrollDelay.value),
         exportFormat: exportFormat.value,
         idsOnly: idsOnly.checked,
+        batchSize: batchSize.value,
+        skipPrevious: skipPrevious.checked,
+        extractionMode: currentMode,
       });
     });
+  });
+
+  // Clear Group History button
+  btnClearHistory.addEventListener('click', () => {
+    if (!activeTabId) return;
+    if (confirm('Clear saved history for this group? Next export will re-collect members from the beginning.')) {
+      chrome.tabs.sendMessage(activeTabId, { action: 'CLEAR_HISTORY' }, (res) => {
+        if (res && res.success) {
+          historyCount.textContent = '0';
+          groupHistoryCard.classList.add('hidden');
+        }
+      });
+    }
   });
 
   // 5. Detect active tab and Facebook page
@@ -166,12 +214,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (isFb) {
         chrome.tabs.sendMessage(activeTabId, { action: 'CHECK_PAGE' }, (response) => {
           if (chrome.runtime.lastError || !response) {
-            // Content script might not be injected yet
             chrome.scripting.executeScript({
               target: { tabId: activeTabId },
               files: ['content.js']
             }, () => {
-              // Retry check after injection
               chrome.tabs.sendMessage(activeTabId, { action: 'CHECK_PAGE' }, (res2) => {
                 handlePageCheck(res2);
               });
@@ -196,6 +242,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       pageStatusDetail.textContent = 'Ready to extract member list';
       btnOpenFb.classList.add('hidden');
 
+      // Check saved history count
+      chrome.tabs.sendMessage(activeTabId, { action: 'GET_HISTORY_COUNT' }, (histRes) => {
+        if (histRes && histRes.count > 0) {
+          historyCount.textContent = histRes.count.toLocaleString();
+          groupHistoryCard.classList.remove('hidden');
+        } else {
+          groupHistoryCard.classList.add('hidden');
+        }
+      });
+
+      // If already has items in session, suggest resume
+      if (response.existingCount > 0) {
+        modeResume.click();
+      }
+
       if (response.isScraping) {
         setRunningState(true);
       }
@@ -205,6 +266,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       pageStatusHeading.textContent = 'Not on Members Tab';
       pageStatusDetail.textContent = 'Open the group and click on "Members" or "People" tab';
       btnOpenFb.classList.remove('hidden');
+      groupHistoryCard.classList.add('hidden');
     }
     updateStartButtonState();
   }
@@ -215,6 +277,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     pageStatusHeading.textContent = 'Facebook Not Active';
     pageStatusDetail.textContent = 'Open a Facebook Group members page';
     btnOpenFb.classList.remove('hidden');
+    groupHistoryCard.classList.add('hidden');
     updateStartButtonState();
   }
 
@@ -248,17 +311,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       scrollDelay: parseFloat(scrollDelay.value) || 2.5,
       exportFormat: exportFormat.value,
       idsOnly: idsOnly.checked,
+      resumeMode: currentMode === 'resume',
+      skipPrevious: skipPrevious.checked,
+      batchSize: parseInt(batchSize.value, 10) || 0,
     };
 
     chrome.tabs.sendMessage(activeTabId, {
       action: 'START_SCRAPING',
       options
-    }, (res) => {
+    }, () => {
       setRunningState(true);
-      statCollected.textContent = '0';
-      statWithIds.textContent = '0';
-      statScrolls.textContent = '0';
-      progressBar.style.width = '0%';
+      if (currentMode !== 'resume') {
+        statCollected.textContent = '0';
+        statWithIds.textContent = '0';
+        statScrolls.textContent = '0';
+        progressBar.style.width = '0%';
+      }
     });
   });
 
@@ -295,6 +363,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       statWithIds.textContent = data.withIds;
       liveStatusText.textContent = `Completed! ${data.total} members exported.`;
       progressBar.style.width = '100%';
+
+      if (data.totalHistory) {
+        historyCount.textContent = data.totalHistory.toLocaleString();
+        groupHistoryCard.classList.remove('hidden');
+      }
     }
   });
 });

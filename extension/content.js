@@ -1,4 +1,4 @@
-// Content script for Facebook Group Member Exporter Pro
+// Content script for Facebook Group Member Exporter Pro with Smart Large Group Support
 (() => {
   // Prevent multiple injections
   if (window.__fbExporterLoaded) return;
@@ -18,6 +18,8 @@
   let scrollCount = 0;
   let idleCount = 0;
   let currentGroupSlug = '';
+  let batchNumber = 1;
+  let lastBatchExportedCount = 0;
 
   function getGroupSlug() {
     try {
@@ -39,6 +41,29 @@
       return parts[0] === 'groups' && parts.length >= 3 && parts[2] === 'members';
     } catch (e) {
       return false;
+    }
+  }
+
+  async function getSavedGroupHistory(group) {
+    try {
+      const key = `fb_history_${group}`;
+      const res = await chrome.storage.local.get([key]);
+      return new Set(res[key] || []);
+    } catch (e) {
+      return new Set();
+    }
+  }
+
+  async function updateSavedGroupHistory(group, newKeys) {
+    try {
+      const key = `fb_history_${group}`;
+      const res = await chrome.storage.local.get([key]);
+      const existing = new Set(res[key] || []);
+      for (const k of newKeys) existing.add(k);
+      await chrome.storage.local.set({ [key]: Array.from(existing) });
+      return existing.size;
+    } catch (e) {
+      return 0;
     }
   }
 
@@ -91,7 +116,7 @@
         if (!identity.id && !row) continue;
 
         const name = (a.innerText || '').replace(/\s+/g, ' ').trim();
-        if (!name || name.length > 100) continue; // Skip avatars or whole paragraph links
+        if (!name || name.length > 100) continue; // Skip avatars or long links
 
         entries.push({
           ...identity,
@@ -123,20 +148,18 @@
   function formatCSVValue(val) {
     if (val === null || val === undefined) return '""';
     const str = String(val).replace(/"/g, '""');
-    // Prevent Excel formula injection
     const sanitized = /^[=+\-@]/.test(str) ? "'" + str : str;
     return `"${sanitized}"`;
   }
 
-  function generateCSV(records, idsOnly) {
+  function generateCSV(recordsMap, idsOnly) {
     const fields = ['id', 'username', 'name', 'profile_url', 'group_url', 'collected_at'];
-    let rows = Array.from(records.values());
+    let rows = Array.from(recordsMap.values());
     if (idsOnly) {
       rows = rows.filter(r => Boolean(r.id));
     }
     rows.sort((a, b) => (b.id ? 1 : 0) - (a.id ? 1 : 0) || a.name.localeCompare(b.name));
 
-    // Add UTF-8 BOM so Excel opens accents and long numbers properly
     let csv = '\uFEFF' + fields.map(f => `"${f}"`).join(',') + '\r\n';
     for (const row of rows) {
       csv += fields.map(f => formatCSVValue(row[f] || '')).join(',') + '\r\n';
@@ -144,13 +167,42 @@
     return { data: csv, count: rows.length };
   }
 
-  function generateJSON(records, idsOnly) {
-    let rows = Array.from(records.values());
+  function generateJSON(recordsMap, idsOnly) {
+    let rows = Array.from(recordsMap.values());
     if (idsOnly) {
       rows = rows.filter(r => Boolean(r.id));
     }
     rows.sort((a, b) => (b.id ? 1 : 0) - (a.id ? 1 : 0) || a.name.localeCompare(b.name));
     return { data: JSON.stringify(rows, null, 2), count: rows.length };
+  }
+
+  function downloadBatch(group, format, idsOnly, batchIdx, recordsToSave) {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const baseName = `fb_members_${group}_part${batchIdx}_${timestamp}`;
+
+    if (format === 'csv' || format === 'both') {
+      const csvResult = generateCSV(recordsToSave, idsOnly);
+      chrome.runtime.sendMessage({
+        type: 'DOWNLOAD_FILE',
+        data: {
+          filename: `${baseName}.csv`,
+          content: csvResult.data,
+          mimeType: 'text/csv;charset=utf-8;'
+        }
+      }).catch(() => {});
+    }
+
+    if (format === 'json' || format === 'both') {
+      const jsonResult = generateJSON(recordsToSave, idsOnly);
+      chrome.runtime.sendMessage({
+        type: 'DOWNLOAD_FILE',
+        data: {
+          filename: `${baseName}.json`,
+          content: jsonResult.data,
+          mimeType: 'application/json;charset=utf-8;'
+        }
+      }).catch(() => {});
+    }
   }
 
   async function startScrapingLoop(options) {
@@ -161,17 +213,28 @@
     isScraping = true;
     shouldStop = false;
     currentGroupSlug = group;
-    scrapedRecords.clear();
-    scrollCount = 0;
-    idleCount = 0;
 
+    const resumeMode = Boolean(options.resumeMode);
+    const skipPrevious = Boolean(options.skipPrevious);
+    const batchSize = parseInt(options.batchSize, 10) || 0;
     const maxMembers = options.maxMembers || 1000;
     const delay = (options.scrollDelay || 2.5) * 1000;
     const idsOnly = Boolean(options.idsOnly);
     const format = options.exportFormat || 'both';
 
+    if (!resumeMode) {
+      scrapedRecords.clear();
+      scrollCount = 0;
+      idleCount = 0;
+      batchNumber = 1;
+      lastBatchExportedCount = 0;
+    }
+
+    // Load previously exported member history for this group
+    const savedHistory = skipPrevious ? await getSavedGroupHistory(group) : new Set();
+
     try {
-      while (!shouldStop && scrapedRecords.size < maxMembers && scrollCount < 1000) {
+      while (!shouldStop && scrapedRecords.size < maxMembers && scrollCount < 2000) {
         if (!isMembersPage()) {
           console.warn('[FB Exporter] Browser left members page.');
           break;
@@ -188,6 +251,12 @@
 
         for (const entry of visible) {
           const key = entry.profile_url.toLowerCase();
+
+          // Skip previously exported history if enabled
+          if (skipPrevious && savedHistory.has(key)) {
+            continue;
+          }
+
           if (!scrapedRecords.has(key)) {
             if (scrapedRecords.size >= maxMembers) break;
             scrapedRecords.set(key, entry);
@@ -204,6 +273,26 @@
           idleCount++;
         } else {
           idleCount = 0;
+        }
+
+        // Batch auto-saving check
+        if (batchSize > 0 && (currentCount - lastBatchExportedCount) >= batchSize) {
+          const batchRecords = new Map();
+          let i = 0;
+          for (const [k, v] of scrapedRecords.entries()) {
+            if (i >= lastBatchExportedCount && i < currentCount) {
+              batchRecords.set(k, v);
+            }
+            i++;
+          }
+
+          if (batchRecords.size > 0) {
+            downloadBatch(group, format, idsOnly, batchNumber, batchRecords);
+            // Save to history
+            updateSavedGroupHistory(group, Array.from(batchRecords.keys()));
+            batchNumber++;
+            lastBatchExportedCount = currentCount;
+          }
         }
 
         // Send progress message to extension popup
@@ -236,37 +325,57 @@
       }
     } finally {
       isScraping = false;
-      exportAndFinish(group, format, idsOnly);
+      exportAndFinish(group, format, idsOnly, batchSize > 0 && lastBatchExportedCount > 0);
     }
   }
 
-  function exportAndFinish(group, format, idsOnly) {
+  async function exportAndFinish(group, format, idsOnly, hasBatched) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const baseName = `fb_members_${group}_${timestamp}`;
-
-    if (format === 'csv' || format === 'both') {
-      const csvResult = generateCSV(scrapedRecords, idsOnly);
-      chrome.runtime.sendMessage({
-        type: 'DOWNLOAD_FILE',
-        data: {
-          filename: `${baseName}.csv`,
-          content: csvResult.data,
-          mimeType: 'text/csv;charset=utf-8;'
+    
+    // Determine records to export (if batched, only export remaining)
+    let recordsToExport = scrapedRecords;
+    if (hasBatched && lastBatchExportedCount < scrapedRecords.size) {
+      recordsToExport = new Map();
+      let i = 0;
+      for (const [k, v] of scrapedRecords.entries()) {
+        if (i >= lastBatchExportedCount) {
+          recordsToExport.set(k, v);
         }
-      }).catch(() => {});
+        i++;
+      }
     }
 
-    if (format === 'json' || format === 'both') {
-      const jsonResult = generateJSON(scrapedRecords, idsOnly);
-      chrome.runtime.sendMessage({
-        type: 'DOWNLOAD_FILE',
-        data: {
-          filename: `${baseName}.json`,
-          content: jsonResult.data,
-          mimeType: 'application/json;charset=utf-8;'
-        }
-      }).catch(() => {});
+    if (recordsToExport.size > 0) {
+      const suffix = hasBatched ? `_final` : ``;
+      const baseName = `fb_members_${group}${suffix}_${timestamp}`;
+
+      if (format === 'csv' || format === 'both') {
+        const csvResult = generateCSV(recordsToExport, idsOnly);
+        chrome.runtime.sendMessage({
+          type: 'DOWNLOAD_FILE',
+          data: {
+            filename: `${baseName}.csv`,
+            content: csvResult.data,
+            mimeType: 'text/csv;charset=utf-8;'
+          }
+        }).catch(() => {});
+      }
+
+      if (format === 'json' || format === 'both') {
+        const jsonResult = generateJSON(recordsToExport, idsOnly);
+        chrome.runtime.sendMessage({
+          type: 'DOWNLOAD_FILE',
+          data: {
+            filename: `${baseName}.json`,
+            content: jsonResult.data,
+            mimeType: 'application/json;charset=utf-8;'
+          }
+        }).catch(() => {});
+      }
     }
+
+    // Save all newly scraped keys to history
+    const totalHistory = await updateSavedGroupHistory(group, Array.from(scrapedRecords.keys()));
 
     let withIds = 0;
     for (const item of scrapedRecords.values()) {
@@ -279,7 +388,8 @@
         total: scrapedRecords.size,
         withIds,
         scrolls: scrollCount,
-        group
+        group,
+        totalHistory
       }
     }).catch(() => {});
   }
@@ -293,7 +403,8 @@
         isMembersPage: valid,
         groupSlug: slug,
         url: window.location.href,
-        isScraping
+        isScraping,
+        existingCount: scrapedRecords.size
       });
       return true;
     }
@@ -322,6 +433,30 @@
         scrolls: scrollCount,
         group: currentGroupSlug
       });
+      return true;
+    }
+
+    if (message.action === 'CLEAR_HISTORY') {
+      const group = getGroupSlug();
+      if (group) {
+        chrome.storage.local.remove([`fb_history_${group}`], () => {
+          sendResponse({ success: true });
+        });
+        return true;
+      }
+      sendResponse({ success: false });
+      return true;
+    }
+
+    if (message.action === 'GET_HISTORY_COUNT') {
+      const group = getGroupSlug();
+      if (group) {
+        getSavedGroupHistory(group).then(set => {
+          sendResponse({ count: set.size });
+        });
+        return true;
+      }
+      sendResponse({ count: 0 });
       return true;
     }
   });

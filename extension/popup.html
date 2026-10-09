@@ -84,6 +84,14 @@
         <span class="card-title">Export Settings</span>
       </div>
 
+      <div class="form-group">
+        <label>Extraction Mode</label>
+        <div class="mode-selector">
+          <button type="button" id="modeFresh" class="btn-mode active">Start Fresh</button>
+          <button type="button" id="modeResume" class="btn-mode">Resume Scroll</button>
+        </div>
+      </div>
+
       <div class="settings-grid">
         <div class="form-group">
           <label for="maxMembers">Max Members</label>
@@ -95,13 +103,24 @@
         </div>
       </div>
 
-      <div class="form-group">
-        <label for="exportFormat">Output Format</label>
-        <select id="exportFormat">
-          <option value="both" selected>Both (CSV & JSON)</option>
-          <option value="csv">CSV Only (Excel ready)</option>
-          <option value="json">JSON Only</option>
-        </select>
+      <div class="settings-grid">
+        <div class="form-group">
+          <label for="exportFormat">Output Format</label>
+          <select id="exportFormat">
+            <option value="both" selected>Both (CSV & JSON)</option>
+            <option value="csv">CSV Only</option>
+            <option value="json">JSON Only</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="batchSize">Batch Auto-Save</label>
+          <select id="batchSize">
+            <option value="0">At End Only</option>
+            <option value="500" selected>Every 500</option>
+            <option value="1000">Every 1,000</option>
+            <option value="2000">Every 2,000</option>
+          </select>
+        </div>
       </div>
 
       <div class="form-check">
@@ -110,6 +129,20 @@
           <span class="toggle-slider"></span>
           <span class="toggle-text">Only Export Numeric IDs</span>
         </label>
+      </div>
+
+      <div class="form-check" style="margin-top: 6px;">
+        <label class="toggle-label">
+          <input type="checkbox" id="skipPrevious" checked>
+          <span class="toggle-slider"></span>
+          <span class="toggle-text">Skip Already Exported (Deduplicate)</span>
+        </label>
+      </div>
+
+      <!-- Group History Status -->
+      <div id="groupHistoryCard" class="history-pill hidden">
+        <span>History: <strong id="historyCount">0</strong> members</span>
+        <button type="button" id="btnClearHistory" class="btn-link-danger">Clear</button>
       </div>
     </section>
 
